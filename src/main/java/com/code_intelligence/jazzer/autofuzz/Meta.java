@@ -445,10 +445,12 @@ public class Meta {
     }
     if (type == String.class || type == CharSequence.class) {
       String result;
-      // С вероятностью, например, 30% (0.3) используем нашу новую логику для генерации эмодзи.
-      // Эту вероятность можно сделать настраиваемой или изменять для экспериментов.
-      if (data.consumeProbability() < 0.3) {
-        // Определяем максимальную длину для таких "специальных" строк.
+        // Генерируем байт (-128 to 127). Преобразуем его в диапазон 0-255.
+        // (data.consumeByte() & 0xFF) дает значение от 0 до 255.
+        // 30% от 256 это примерно 76.8.
+        if ((data.consumeByte() & 0xFF) < 77) { // ~30% шанс (77/256)
+
+            // Определяем максимальную длину для таких "специальных" строк.
         // Можно использовать фиксированное значение или также брать из FuzzedDataProvider.
         int maxLength = data.consumeInt(1, 100); // Генерируем строки длиной от 1 до 100 символов.
         result = consumeStringWithEmojis(data, maxLength);
@@ -870,7 +872,8 @@ public class Meta {
     for (int i = 0; i < length; i++) {
       // С вероятностью, например, 70% (0.7) вставляем эмодзи или специфический Unicode.
       // В остальных 30% случаев - более "простой" символ.
-      if (provider.consumeProbability() < 0.7) {
+        // 70% от 256 это примерно 179.2.
+        if ((provider.consumeByte() & 0xFF) < 179) { // ~70% шанс (179/256)
         int choice = provider.consumeInt(0, 4); // Выбираем категорию Unicode символов
         int codePoint;
         switch (choice) {
