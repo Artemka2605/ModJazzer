@@ -444,9 +444,22 @@ public class Meta {
       return null;
     }
     if (type == String.class || type == CharSequence.class) {
-      String result = data.consumeString(consumeArrayLength(data, 1));
+      String result;
+      // С вероятностью, например, 30% (0.3) используем нашу новую логику для генерации эмодзи.
+      // Эту вероятность можно сделать настраиваемой или изменять для экспериментов.
+      if (data.consumeProbability() < 0.3) {
+        // Определяем максимальную длину для таких "специальных" строк.
+        // Можно использовать фиксированное значение или также брать из FuzzedDataProvider.
+        int maxLength = data.consumeInt(1, 100); // Генерируем строки длиной от 1 до 100 символов.
+        result = consumeStringWithEmojis(data, maxLength);
+      } else {
+        // В остальных случаях используем оригинальную или слегка адаптированную логику Jazzer.
+        // consumeArrayLength пытается использовать до половины оставшихся байт.
+        result = data.consumeString(consumeArrayLength(data, 1));
+      }
+
       if (visitor != null) {
-        visitor.addStringLiteral(result);
+        visitor.addStringLiteral(result); // Это для генерации воспроизводимого кода (репродьюсера)
       }
       return result;
     } else if (type.isArray()) {
@@ -840,5 +853,65 @@ public class Meta {
       throw new AutofuzzError("consume returned " + result.getClass() + ", but need " + types[i]);
     }
     return result;
+  }
+
+  /**
+   * Генерирует строку заданной максимальной длины, с вероятностью включая
+   * различные Unicode символы, в том числе эмодзи.
+   * @param provider FuzzedDataProvider для получения случайных данных.
+   * @param maxLength Максимальная желаемая длина строки. Фактическая длина может быть меньше.
+   * @return Сгенерированная строка.
+   */
+  private String consumeStringWithEmojis(FuzzedDataProvider provider, int maxLength) {
+    // Определяем фактическую длину строки, она может быть меньше maxLength
+    int length = provider.consumeInt(1, maxLength);
+    StringBuilder sb = new StringBuilder(length * 2); // Емкость с запасом для суррогатных пар
+
+    for (int i = 0; i < length; i++) {
+      // С вероятностью, например, 70% (0.7) вставляем эмодзи или специфический Unicode.
+      // В остальных 30% случаев - более "простой" символ.
+      if (provider.consumeProbability() < 0.7) {
+        int choice = provider.consumeInt(0, 4); // Выбираем категорию Unicode символов
+        int codePoint;
+        switch (choice) {
+          case 0:
+            // Эмотиконы (U+1F600 – U+1F64F)
+            codePoint = provider.consumeInt(0x1F600, 0x1F64F);
+            break;
+          case 1:
+            // Разные символы и пиктограммы (U+1F300 – U+1F5FF)
+            codePoint = provider.consumeInt(0x1F300, 0x1F5FF);
+            break;
+          case 2:
+            // Транспорт и карты (U+1F680 – U+1F6FF)
+            codePoint = provider.consumeInt(0x1F680, 0x1F6FF);
+            break;
+          case 3:
+            // Дополнительные символы и пиктограммы (U+1F900 – U+1F9FF) (новые эмодзи)
+            codePoint = provider.consumeInt(0x1F900, 0x1F9FF);
+            break;
+          default:
+          case 4:
+            // Блок "Dingbats" (U+2700 - U+27BF), содержит некоторые значки
+            codePoint = provider.consumeInt(0x2700, 0x27BF);
+            break;
+        }
+        // Character.toChars преобразует кодовую точку Unicode (включая те, что > 0xFFFF)
+        // в массив char[]. Для символов из Supplementary Planes (как большинство эмодзи)
+        // это будет массив из двух char (суррогатная пара).
+        sb.append(Character.toChars(codePoint));
+      } else {
+        // Генерируем "обычный" печатаемый символ или символ из BMP.
+        // consumeCharNoSurrogates() гарантирует, что мы не получим половину суррогатной пары.
+        char simpleChar = provider.consumeCharNoSurrogates();
+        // Дополнительно можно отфильтровать непечатаемые символы, если нужно
+        if (Character.isLetterOrDigit(simpleChar) || Character.isWhitespace(simpleChar) || provider.consumeBoolean()) { // Иногда разрешаем и другие символы
+          sb.append(simpleChar);
+        } else {
+          sb.append(provider.pickValue(new Character[]{'a', 'b', 'c', ' ', '\n'})); // Запасной вариант
+        }
+      }
+    }
+    return sb.toString();
   }
 }
